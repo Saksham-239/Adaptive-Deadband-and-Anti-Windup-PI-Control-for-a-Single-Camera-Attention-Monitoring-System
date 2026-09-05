@@ -139,12 +139,16 @@ with col_left:
         line=dict(color="#4488ff", width=1, dash="dot"),
         opacity=0.5,
     ))
-    # Shade distracted periods
-    for _, row in distracted_df.iterrows():
-        fig_attn.add_vrect(
-            x0=row["datetime"], x1=row["datetime"],
-            fillcolor="red", opacity=0.08, line_width=0,
-        )
+    # Shade contiguous distracted periods
+    is_distracted = df["state"].isin(["DISTRACTED", "PHONE"])
+    if is_distracted.any():
+        blocks = (is_distracted != is_distracted.shift()).cumsum()
+        for _, block_df in df[is_distracted].groupby(blocks):
+            fig_attn.add_vrect(
+                x0=block_df["datetime"].iloc[0],
+                x1=block_df["datetime"].iloc[-1],
+                fillcolor="red", opacity=0.15, line_width=0,
+            )
     fig_attn.update_layout(
         yaxis=dict(range=[0, 1], title="Score"),
         xaxis_title="Time",

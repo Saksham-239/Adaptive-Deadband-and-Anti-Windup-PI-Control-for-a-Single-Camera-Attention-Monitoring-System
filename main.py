@@ -323,7 +323,6 @@ def main():
     # --- Queues ---
     face_q:   queue.Queue = queue.Queue(maxsize=1)
     result_q: queue.Queue = queue.Queue(maxsize=1)
-    frame_q:  queue.Queue = queue.Queue(maxsize=1)
 
     # --- Threads ---
     stop_event = threading.Event()
@@ -389,9 +388,8 @@ def main():
                 time.sleep(0.1)
                 continue
 
-            # Fan out frame to both worker threads
+            # Fan out frame to worker threads
             put_fresh(face_q,  frame.copy())
-            put_fresh(frame_q, frame.copy())
             put_fresh(detector.frame_q, frame.copy())
 
             # Collect latest results (non-blocking)

@@ -87,6 +87,9 @@ class FSMState:
     attn_mean: float = 0.5
     attn_var: float = 0.0
 
+    # Writing sub-state timer
+    writing_timer: float = 0.0
+
     # Break toggle (True = currently in BREAK)
     in_break: bool = False
 
@@ -238,16 +241,14 @@ class FSMController:
             if (inp.gaze_zone == "desk_zone" and
                     inp.head_pitch_deg > self._writing_pitch):
                 s.time_below_distracted_thresh = 0.0  # reset distraction timer
-                if not hasattr(s, '_writing_timer'):
-                    s._writing_timer = 0.0
-                s._writing_timer = getattr(s, '_writing_timer', 0.0) + dt
-                if s._writing_timer >= self._writing_entry:
+                s.writing_timer += dt
+                if s.writing_timer >= self._writing_entry:
                     s.current = State.WRITING
                     s.state_duration = 0.0
-                    s._writing_timer = 0.0
+                    s.writing_timer = 0.0
                     logger.info("FSM: READING → WRITING")
             else:
-                s._writing_timer = 0.0
+                s.writing_timer = 0.0
 
             # READING → THINKING
             if (s.time_below_distracted_thresh >= self._thinking_entry and
@@ -315,9 +316,9 @@ class FSMController:
         Ki = self._Ki_up if e > 0 else self._Ki_down
         I_new = s.intervention_bucket + Ki * e * dt_min
         
-        if I_new > self._I_max and e > 0:
-            pass # Freeze at saturation
-        elif I_new < 0 and e < 0:
+        if I_new >= self._I_max and e > 0:
+            s.intervention_bucket = self._I_max  # Freeze at saturation
+        elif I_new <= 0 and e < 0:
             s.intervention_bucket = 0.0
         else:
             s.intervention_bucket = max(0.0, min(I_new, self._I_max))

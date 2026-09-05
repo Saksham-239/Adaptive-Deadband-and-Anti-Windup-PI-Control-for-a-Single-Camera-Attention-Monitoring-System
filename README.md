@@ -17,6 +17,7 @@ Real-time study attention monitor using webcam, MediaPipe, and YOLOv8.
 ### 3. One-time setup (downloads MediaPipe model, validates GPU)
 ```bash
 .venv\Scripts\python setup.py
+
 ```
 
 ### 4. Run the system
