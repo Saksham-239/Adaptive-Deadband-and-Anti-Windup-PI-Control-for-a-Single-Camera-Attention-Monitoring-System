@@ -1,0 +1,106 @@
+## ============================================================
+## Adaptive AI Study Attention System — Configuration
+## All thresholds, weights and timers live here. Do not
+## hardcode values in Python modules. Tune by editing this
+## file and restarting; no code changes required.
+## ============================================================
+
+filters:
+  head_pose:
+    mincutoff: 1.0
+    beta: 0.007
+  attn_score:
+    mincutoff: 0.5
+    beta: 0.05
+
+camera:
+  device_id: 0
+  width: 1280
+  height: 720
+  fps: 30
+  # If MediaPipe GPU delegate unavailable on Windows,
+  # drop to width=640, height=480 and reduce mediapipe target_fps.
+
+mediapipe:
+  model_asset_path: "models/face_landmarker.task"
+  num_faces: 1
+  min_detection_confidence: 0.60
+  min_presence_confidence: 0.60
+  min_tracking_confidence: 0.60
+  target_fps: 15             # Hz at which MediaPipe thread processes frames
+
+yolo:
+  model_path: "models/yolov8n.pt"
+  # Per-class confidence thresholds. Cell phones need high confidence to avoid false 
+  # positives (like black notebooks). Books can be lower since YOLO struggles with them.
+  confidence_thresholds:
+    book: 0.35
+    cell_phone: 0.75
+    laptop: 0.50
+  iou_threshold: 0.45
+  target_fps: 3              # Hz at which YOLO thread processes frames
+  phone_consecutive_frames: 5   # N frames before PHONE state triggers
+  phone_exit_frames: 10         # frames of absence before leaving PHONE
+  # COCO class IDs: laptop=63, cell phone=67, book=73
+  classes_of_interest: [63, 67, 73]
+
+attention:
+  # Weights must sum to 1.0
+  # Order: [gaze_score, head_score, context_score, blink_score]
+  weights: [0.35, 0.30, 0.25, 0.10]
+  head_sigma_deg: 20.0       # Gaussian std-dev for head score; score=0.6 at sigma degrees
+  gaze_zone_margin_px: 30    # pixels of padding around ROI for gaze hit-test
+  blink_ear_threshold: 0.20  # EAR below this = eye closed
+  blink_smooth_window_sec: 2.0  # rolling window for blink rate smoothing
+
+fsm:
+  thinking_entry_sec: 3.0    # sustained A_f < distracted_threshold before THINKING
+  thinking_max_sec: 8.0      # max time in THINKING before → DISTRACTED
+  writing_entry_sec: 2.0     # sustained desk_zone gaze before → WRITING
+  writing_pitch_deg: 15.0    # minimum head pitch-down to classify as WRITING
+  return_to_reading_sec: 2.0 # sustained A_f >= focused_threshold before → READING
+  distracted_return_sec: 2.0 # same gate when returning from DISTRACTED
+  base_focused_threshold: 0.65  # Base threshold to return to READING
+  base_distracted_threshold: 0.55 # Base threshold to exit READING downward
+  brightness_floor: 40       # mean frame brightness below this → UNKNOWN state
+  # Adaptive Deadband Parameters
+  emv_alpha: 0.05            # EMV smoothing factor for variance
+  min_bandwidth: 0.06        # Minimum hysteresis gap width
+  max_bandwidth: 0.30        # Maximum hysteresis gap width
+  k_band: 1.0                # Multiplier mapping std_dev to bandwidth
+
+intervention:
+  min_interval_sec: 60       # absolute floor between any two TTS interventions
+  # PI Controller params for intervention bucket (these need empirical tuning)
+  # Ki_up and Ki_down are per-minute rates. The controller internally converts dt to minutes.
+  Kp: 0.5
+  Ki_up: 1.2
+  Ki_down: 0.15
+  I_max: 3.0
+  tts_rate: 175              # words-per-minute for pyttsx3
+  tts_volume: 0.9            # 0.0–1.0
+  messages:
+    tier1:
+      - "Hey, back to the books!"
+      - "Refocus — you were doing great."
+      - "Eyes back on the material."
+    tier2:
+      - "You've been distracted for a while. Let's refocus."
+      - "That's enough of a break — back to studying."
+    tier3:
+      - "You've lost several minutes. Close the distraction and refocus now."
+      - "Sustained distraction detected. Time to get back on track."
+
+logging:
+  db_path: "data/sessions.db"
+  log_interval_sec: 0.5      # SQLite row every N seconds
+
+dashboard:
+  port: 8501
+  refresh_interval_sec: 2    # Streamlit auto-refresh cadence
+
+debug:
+  show_overlay: true         # Draw score/state overlay on OpenCV window
+  show_landmarks: false      # Draw all 478 face landmarks (slow)
+  show_bboxes: true          # Draw YOLO bounding boxes
+  overlay_alpha: 0.7         # Transparency of the overlay panel
