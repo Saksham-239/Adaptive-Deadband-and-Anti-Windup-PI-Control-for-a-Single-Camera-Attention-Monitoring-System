@@ -103,6 +103,9 @@ def context_score(
     If gaze is in desk_zone but no YOLO object matches → 0.7 (pen/paper implied).
     COCO has no pen/paper class — this is zone-based, not class-based.
     """
+    if gaze_zone == GazeZone.DESK and not bboxes:
+        return 0.7  # pen/paper implied when looking at desk with no detections
+
     if not bboxes:
         # No detections yet (YOLO cache empty at startup)
         return 0.5  # neutral — don't penalise startup

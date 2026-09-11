@@ -42,6 +42,7 @@ htmlcov/
 data/*.db
 data/*.sqlite3
 diagnose_results.csv
+scratch/
 
 # Large model weights (downloaded via setup.py / ultralytics)
 *.pt

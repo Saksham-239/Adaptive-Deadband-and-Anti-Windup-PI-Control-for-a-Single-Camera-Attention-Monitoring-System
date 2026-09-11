@@ -112,9 +112,9 @@ class TestContextScore:
         assert score == pytest.approx(0.5)
 
     def test_desk_zone_no_match_returns_07(self):
-        # No YOLO object detected, but gaze is on desk zone
+        # No YOLO object detected, but gaze is on desk zone -> pen/paper implied (0.7)
         score = context_score(GazeZone.DESK, [], iris_cx=500, iris_cy=500)
-        assert score == pytest.approx(0.5)  # empty bboxes → neutral
+        assert score == pytest.approx(0.7)
 
 
 # ---------------------------------------------------------------------------

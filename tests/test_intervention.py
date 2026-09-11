@@ -25,9 +25,6 @@ from core.intervention import TTSEngine, SessionLogger, LogRow
 BASE_IV_CFG = {
     "intervention": {
         "min_interval_sec": 1.0,  # short for testing
-        "bucket_distracted_rate": 0.5,
-        "bucket_recovery_rate":   0.3,
-        "bucket_max": 3.0,
         "tts_rate":   175,
         "tts_volume": 0.9,
         "messages": {

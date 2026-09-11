@@ -75,8 +75,12 @@ intervention:
   # Ki_up and Ki_down are per-minute rates. The controller internally converts dt to minutes.
   Kp: 0.5
   Ki_up: 1.2
-  Ki_down: 0.15
-  I_max: 3.0
+  Ki_down: 6.0
+  cool_down_rate: 0.5        # Integrator decay rate (per minute) in neutral/non-intervention states
+  u_act_max: 2.25            # Effective physical actuator saturation boundary (Tier 3 entry)
+  tier_hysteresis_delta: 0.05 # Downward Schmitt trigger hysteresis width
+  unknown_reset_factor: 0.5  # Fraction of integral debt retained upon UNKNOWN recovery
+  I_max: 3.0                 # Numerical safety ceiling for integrator state
   tts_rate: 175              # words-per-minute for pyttsx3
   tts_volume: 0.9            # 0.0–1.0
   messages:

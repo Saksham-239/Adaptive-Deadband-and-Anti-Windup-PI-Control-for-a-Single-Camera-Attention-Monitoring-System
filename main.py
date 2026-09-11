@@ -81,6 +81,7 @@ def draw_overlay(
     ctx_s: float,
     blink_s: float,
     bucket: float,
+    tier: int,
     fps: float,
     bboxes: list,
     book_roi: Optional[tuple],
@@ -125,7 +126,6 @@ def draw_overlay(
                         cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 220), 1)
 
         # Bucket / tier
-        tier = min(int(bucket), 3)
         cv2.putText(frame, f"bucket={bucket:.1f}  tier={tier}  fps={fps:.0f}",
                     (5, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 180), 1)
 
@@ -402,8 +402,16 @@ def main():
 
             # --- Tick timing ---
             now = time.monotonic()
-            dt  = now - last_tick
+            raw_dt = now - last_tick
             last_tick = now
+
+            # Decoupled timing: FSM wall-clock tracking vs PI integration
+            fsm_dt = max(0.001, min(raw_dt, 60.0))
+            if raw_dt > 0.50:
+                # Discontinuity detected (e.g. window drag, lag spike) -> hold PI integration
+                ctrl_dt = 0.0
+            else:
+                ctrl_dt = max(0.001, min(raw_dt, 0.10))
 
             # --- Brightness check ---
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -484,7 +492,8 @@ def main():
                 mean_brightness=brightness,
                 face_detected=face_detected,
                 break_key_pressed=(key_now == ord('b')),
-                dt=dt,
+                dt=fsm_dt,
+                ctrl_dt=ctrl_dt,
             )
             current_state, tier = fsm_ctrl.tick(fsm_state, fsm_input)
 
@@ -528,6 +537,7 @@ def main():
                 ctx_s=scorer.last_context_score,
                 blink_s=scorer.last_blink_score,
                 bucket=fsm_state.intervention_bucket,
+                tier=tier,
                 fps=fps_display,
                 bboxes=last_bboxes,
                 book_roi=book_roi,
