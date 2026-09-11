@@ -307,7 +307,11 @@ class TestInterventionBucket:
         # u_raw = Kp * e_db + I >= 2.25. Since e_db > 0, I < 2.25 and I << 3.0
         assert s.intervention_bucket < 2.25
         # u must saturate at u_act_max (2.25), not 3.0
-        e_db = (ctrl._base_distracted_thresh - 0.05) - 0.20 # positive error
+        std_dev = s.attn_var ** 0.5
+        bw = max(ctrl._min_bandwidth, min(ctrl._min_bandwidth + ctrl._k_band * std_dev, ctrl._max_bandwidth))
+        T_c = (ctrl._base_focused_thresh + ctrl._base_distracted_thresh) / 2.0
+        T_low = T_c - bw / 2.0
+        e_db = T_low - 0.20 # positive error
         u_sat = ctrl._Kp * e_db + s.intervention_bucket
         assert u_sat >= 2.25
         assert s.intervention_bucket < 3.0
@@ -426,10 +430,15 @@ class TestFinalizedArchitecture:
         for _ in range(500):
             ctrl.tick(s, make_input(attention_filtered=0.10, dt=0.1, ctrl_dt=0.1))
             
-        # Integrator should NOT reach I_max (3.0); it must stop once u_raw >= 2.25
-        assert s.intervention_bucket < 2.25
-        u_raw = ctrl._Kp * (ctrl._base_distracted_thresh - 0.10) + s.intervention_bucket
-        assert u_raw >= 2.25
+        # Integrator should NOT reach I_max (3.0); it must stop once u_raw >= u_act_max (2.25)
+        assert s.intervention_bucket < ctrl._u_act_max
+        std_dev = s.attn_var ** 0.5
+        bw = max(ctrl._min_bandwidth, min(ctrl._min_bandwidth + ctrl._k_band * std_dev, ctrl._max_bandwidth))
+        T_c = (ctrl._base_focused_thresh + ctrl._base_distracted_thresh) / 2.0
+        T_low = T_c - bw / 2.0
+        e_db = T_low - 0.10
+        u_raw = ctrl._Kp * e_db + s.intervention_bucket
+        assert u_raw >= ctrl._u_act_max
 
     def test_one_step_anti_windup_boundary_crossing(self):
         """Positive integration cannot drive controller demand beyond u_act_max in a single step."""
@@ -449,6 +458,27 @@ class TestFinalizedArchitecture:
         assert u_final == pytest.approx(ctrl._u_act_max)
         assert s.intervention_bucket == pytest.approx(ctrl._u_act_max - ctrl._Kp * e_db)
         assert tier == 3
+
+    def test_quantizer_tier3_aligned_with_configured_u_act_max(self):
+        """Tier 3 threshold scales with configured u_act_max, and invalid values <= 1.50 are rejected."""
+        # 1. Custom valid u_act_max (e.g. 2.00)
+        custom_cfg = {**BASE_CFG, "intervention": {**BASE_CFG["intervention"], "u_act_max": 2.00}}
+        ctrl_custom = FSMController(custom_cfg)
+        s = FSMState(current=State.DISTRACTED, prev_tier=2)
+        # At u = 1.99, tier should be 2
+        tier_below = ctrl_custom._update_pi_controller(s, e_db=0.0, dt=0.0)
+        s.intervention_bucket = 1.99
+        tier_below = ctrl_custom._update_pi_controller(s, e_db=0.0, dt=0.0)
+        assert tier_below == 2
+        # At u = 2.00, tier should be 3
+        s.intervention_bucket = 2.00
+        tier_at = ctrl_custom._update_pi_controller(s, e_db=0.0, dt=0.0)
+        assert tier_at == 3
+
+        # 2. Reject u_act_max <= 1.50 (must exceed Tier 2 entry)
+        invalid_cfg = {**BASE_CFG, "intervention": {**BASE_CFG["intervention"], "u_act_max": 1.40}}
+        with pytest.raises(ValueError, match="must be greater than Tier 2 threshold"):
+            FSMController(invalid_cfg)
 
     def test_negative_integration_below_saturation_boundary(self):
         """5. Negative integration remains possible below saturation boundary."""

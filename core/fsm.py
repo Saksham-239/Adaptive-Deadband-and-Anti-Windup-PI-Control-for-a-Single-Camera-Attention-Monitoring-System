@@ -108,22 +108,27 @@ class FSMState:
 # Stateful Schmitt Quantizer
 # ---------------------------------------------------------------------------
 
-def quantize_tier_with_hysteresis(u: float, prev_tier: int, delta: float = 0.05) -> int:
+def quantize_tier_with_hysteresis(
+    u: float,
+    prev_tier: int,
+    delta: float = 0.05,
+    u_tier3: float = 2.25,
+) -> int:
     """
     Stateful 4-tier Schmitt quantizer with hysteresis.
 
     Nominal upward thresholds:
         Tier 0 -> 1: 0.75
         Tier 1 -> 2: 1.50
-        Tier 2 -> 3: 2.25
+        Tier 2 -> 3: u_tier3 (default 2.25, aligned with u_act_max)
 
     Downward thresholds (nominal - delta):
         Tier 1 -> 0: 0.75 - delta (0.70)
         Tier 2 -> 1: 1.50 - delta (1.45)
-        Tier 3 -> 2: 2.25 - delta (2.20)
+        Tier 3 -> 2: u_tier3 - delta (default 2.20)
     """
     if prev_tier == 0:
-        if u >= 2.25:
+        if u >= u_tier3:
             return 3
         elif u >= 1.50:
             return 2
@@ -132,7 +137,7 @@ def quantize_tier_with_hysteresis(u: float, prev_tier: int, delta: float = 0.05)
         else:
             return 0
     elif prev_tier == 1:
-        if u >= 2.25:
+        if u >= u_tier3:
             return 3
         elif u >= 1.50:
             return 2
@@ -141,7 +146,7 @@ def quantize_tier_with_hysteresis(u: float, prev_tier: int, delta: float = 0.05)
         else:
             return 1
     elif prev_tier == 2:
-        if u >= 2.25:
+        if u >= u_tier3:
             return 3
         elif u < (1.50 - delta):
             if u < (0.75 - delta):
@@ -150,7 +155,7 @@ def quantize_tier_with_hysteresis(u: float, prev_tier: int, delta: float = 0.05)
         else:
             return 2
     elif prev_tier == 3:
-        if u < (2.25 - delta):
+        if u < (u_tier3 - delta):
             if u < (0.75 - delta):
                 return 0
             elif u < (1.50 - delta):
@@ -160,7 +165,7 @@ def quantize_tier_with_hysteresis(u: float, prev_tier: int, delta: float = 0.05)
         else:
             return 3
     else:
-        if u >= 2.25:
+        if u >= u_tier3:
             return 3
         elif u >= 1.50:
             return 2
@@ -210,6 +215,10 @@ class FSMController:
         self._Ki_down           = iv.get("Ki_down", 6.0)
         self._cool_down_rate    = iv.get("cool_down_rate", 0.5)
         self._u_act_max         = iv.get("u_act_max", 2.25)
+        if self._u_act_max <= 1.50:
+            raise ValueError(
+                f"u_act_max ({self._u_act_max}) must be greater than Tier 2 threshold (1.50)"
+            )
         self._tier_hysteresis_delta = iv.get("tier_hysteresis_delta", 0.05)
         self._unknown_reset_factor = iv.get("unknown_reset_factor", 0.5)
         self._I_max             = iv.get("I_max", 3.0)
@@ -455,7 +464,9 @@ class FSMController:
                 s.intervention_bucket = max(0.0, s.intervention_bucket - self._cool_down_rate * s.intervention_bucket * dt_min)
 
         u = self._Kp * e_db + s.intervention_bucket
-        tier = quantize_tier_with_hysteresis(u, s.prev_tier, self._tier_hysteresis_delta)
+        tier = quantize_tier_with_hysteresis(
+            u, s.prev_tier, delta=self._tier_hysteresis_delta, u_tier3=self._u_act_max
+        )
         s.prev_tier = tier
         return tier
 

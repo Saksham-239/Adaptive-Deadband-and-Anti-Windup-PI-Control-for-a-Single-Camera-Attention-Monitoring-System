@@ -253,7 +253,21 @@ $$\text{freeze\_upward} \iff (\text{prev\_tier} == 3 \text{ and } e > 0) \lor (u
    - Decoupled `fsm_dt` and `ctrl_dt`, zeroing `ctrl_dt` during lag discontinuities ($raw\_dt > 0.50\text{s}$).
    - Updated `draw_overlay` to display the actual Schmitt controller `tier` on the HUD rather than stale floor calculation.
 5. **Testing & Empirical Validation**:
-   - Complete test suite: **75 passed, 0 failed, 2 upstream warnings in 1.32s**.
+   - Complete test suite: **76 passed, 0 failed, 2 upstream warnings in 1.52s**.
    - Real hardware smoke test: live camera acquisition (256 frames, 25.6 FPS), MediaPipe worker (67 face detections), YOLO detector daemon (3 Hz), pyttsx3 TTS SAPI5 daemon, SQLite SessionLogger (812 rows logged).
    - Final status: **PRODUCTION-LIKE DEMO READY**.
 
+---
+
+## 8. Post-Freeze Code Review Refinements (CodeRabbit Alignment)
+
+1. **Quantizer Boundary Synchronization (`u_act_max`)**:
+   - `quantize_tier_with_hysteresis()` previously hardcoded Tier 3 transitions at $2.25$ and $2.20$, which broke synchronization if `u_act_max` was reconfigured.
+   - Refactored `quantize_tier_with_hysteresis(u, prev_tier, delta, u_tier3=2.25)` to dynamically accept `u_tier3`.
+   - `FSMController._update_pi_controller` passes `u_tier3=self._u_act_max`.
+   - Added validation in `FSMController.__init__` ensuring `u_act_max > 1.50` (must strictly exceed Tier 2 threshold).
+
+2. **Test Grounding on Settled Adaptive Thresholds**:
+   - Tests `test_pi_windup` and `test_anti_windup_stops_positive_integration_at_u_act_max` were calculating $e_{\text{db}}$ from static nominal baselines ($0.55 - 0.05$) rather than the settled running variance.
+   - Grounded test calculations on `s.attn_var` to derive exact instantaneous $T_{\text{low}} = T_c - \text{bandwidth}/2$.
+   - Added `test_quantizer_tier3_aligned_with_configured_u_act_max` to verify custom boundary scaling and invalid threshold rejection.
