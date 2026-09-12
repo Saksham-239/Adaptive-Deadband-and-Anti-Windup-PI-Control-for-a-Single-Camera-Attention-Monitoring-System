@@ -27,6 +27,7 @@ mediapipe:
   min_detection_confidence: 0.60
   min_presence_confidence: 0.60
   min_tracking_confidence: 0.60
+  staleness_timeout_sec: 0.5 # Max time without fresh face result before marking absent
   target_fps: 15             # Hz at which MediaPipe thread processes frames
 
 yolo:
@@ -36,13 +37,19 @@ yolo:
   confidence_thresholds:
     book: 0.35
     cell_phone: 0.75
-    laptop: 0.50
   iou_threshold: 0.45
-  target_fps: 3              # Hz at which YOLO thread processes frames
+  target_fps: 5              # Hz at which YOLO thread processes frames
   phone_consecutive_frames: 5   # N frames before PHONE state triggers
   phone_exit_frames: 10         # frames of absence before leaving PHONE
-  # COCO class IDs: laptop=63, cell phone=67, book=73
-  classes_of_interest: [63, 67, 73]
+  # COCO class IDs: cell phone=67, book=73 (laptop completely removed)
+  classes_of_interest: [67, 73]
+
+book_tracker:
+  q_thresh: 0.35              # NCC appearance correlation threshold (book present >= 0.35, noise/desk < 0.1)
+  color_thresh: 0.25          # HSV Hue-Saturation histogram correlation threshold (HISTCMP_CORREL)
+  high_conf_thresh: 0.50      # High-confidence NCC threshold; >= 0.50 confirms presence without color veto
+  absence_timeout_sec: 1.5   # Sustained low-Q duration before book declared absent
+  reacquisition_conf: 0.12   # Low-confidence floor for YOLO book proposals (evaluated against calibrated template)
 
 attention:
   # Weights must sum to 1.0

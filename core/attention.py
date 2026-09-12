@@ -33,40 +33,21 @@ from core.vision import GazeZone, OneEuroFilter
 # Component scorers (pure functions)
 # ---------------------------------------------------------------------------
 
-def gaze_score(
-    gaze_zone: str,
-    book_roi: Optional[tuple[int, int, int, int]],
-    iris_cx: Optional[float],
-    iris_cy: Optional[float],
-    margin_px: int = 30,
-) -> float:
+def gaze_score(gaze_zone: str) -> float:
     """
     Score ∈ [0, 1] based on whether gaze is directed at study material.
 
-    If a book ROI is calibrated and iris coords are available, uses
-    spatial overlap (1.0 inside ROI+margin, 0 if far outside, linear falloff).
-    Otherwise falls back to zone-based classification.
+    Zone-based classification is the primary truth:
+      - BOOK   (1.0): head pitched down toward calibrated book material
+      - DESK   (0.8): head pitched down toward study desk
+      - SCREEN (0.6): head centered at display (neutral posture)
+      - AWAY   (0.0): head turned away or tilted up
+      - UNKNOWN(0.3): occluded or uncalibrated
     """
-    if book_roi is not None and iris_cx is not None and iris_cy is not None:
-        x1, y1, x2, y2 = book_roi
-        # Expand ROI by margin
-        rx1, ry1 = x1 - margin_px, y1 - margin_px
-        rx2, ry2 = x2 + margin_px, y2 + margin_px
-        # Check if inside
-        if rx1 <= iris_cx <= rx2 and ry1 <= iris_cy <= ry2:
-            return 1.0
-        # Linear falloff from edge to 2× margin outside
-        dist_x = max(rx1 - iris_cx, 0, iris_cx - rx2)
-        dist_y = max(ry1 - iris_cy, 0, iris_cy - ry2)
-        dist   = math.sqrt(dist_x ** 2 + dist_y ** 2)
-        roi_diag = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2) + 1e-6
-        return float(max(0.0, 1.0 - dist / (roi_diag * 0.5)))
-
-    # Zone-based fallback
     zone_scores = {
         GazeZone.BOOK:    1.0,
-        GazeZone.SCREEN:  0.6,   # head straight — neutral study posture
         GazeZone.DESK:    0.8,   # looking down at desk — actively studying
+        GazeZone.SCREEN:  0.6,   # head straight — neutral study posture
         GazeZone.AWAY:    0.0,
         GazeZone.UNKNOWN: 0.3,
     }
@@ -218,7 +199,7 @@ class AttentionScorer:
         Compute one step and return the filtered attention score.
         Call this once per main-loop iteration.
         """
-        g = gaze_score(gaze_zone, book_roi, iris_cx, iris_cy, self._margin_px)
+        g = gaze_score(gaze_zone)
         h = head_score(yaw, pitch, self._sigma_deg)
         c = context_score(gaze_zone, bboxes, iris_cx, iris_cy, self._margin_px)
         b = blink_score(mean_ear, self._ear_threshold)

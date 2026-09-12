@@ -16,7 +16,7 @@
 # NOTE: mediapipe GPU delegate on Windows may not be available — test on Day 1.
 # If CPU-only, drop camera resolution to 640x480 in config.yaml.
 mediapipe==0.10.14
-opencv-python==4.10.0.84
+opencv-contrib-python==5.0.0.93
 
 # Object detection — torch installed separately above (CUDA wheel)
 ultralytics==8.3.40

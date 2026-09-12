@@ -24,8 +24,7 @@ while time.time() - start < 3:
     r = proc.process_frame(frame)
     t = time.time() - start
     if r and r.pose_valid and t - last >= 0.3:
-        gz = r.gaze_zone
-        gs = gaze_score(gz, None, None, None, cfg["attention"]["gaze_zone_margin_px"])
+        gs = gaze_score(gz)
         hs = head_score(r.yaw, r.pitch, cfg["attention"]["head_sigma_deg"])
         bs = blink_score(r.mean_ear, cfg["attention"]["blink_ear_threshold"])
         print(f"[{t:4.1f}s] yaw={r.yaw:+6.1f} pitch={r.pitch:+6.1f} roll={r.roll:+6.1f} "

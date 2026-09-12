@@ -259,17 +259,15 @@ def classify_gaze_zone(
     if pitch < -15.0:
         return GazeZone.AWAY
 
-    # Looking down at desk (positive pitch) → desk
+    # Looking down at desk (positive pitch) → desk or book
     if pitch > pitch_down_threshold:
+        if book_roi is not None:
+            return GazeZone.BOOK
         return GazeZone.DESK
 
     # Significant eye deviation without head turn → away (side-eye)
     if abs(iris_dev_x) > 0.55:
         return GazeZone.AWAY
-
-    # If a book ROI has been calibrated, centered gaze = book zone
-    if book_roi is not None:
-        return GazeZone.BOOK
 
     # Default: head centered, not looking down or up → screen
     return GazeZone.SCREEN
@@ -348,10 +346,20 @@ class VisionProcessor:
             logger.warning("MediaPipe GPU delegate unavailable (%s). Using CPU.", exc)
             return mp_python.BaseOptions(model_asset_path=model_path)
 
-    def set_book_roi(self, roi: tuple[int, int, int, int]) -> None:
+    def set_book_roi(self, roi: Optional[tuple[int, int, int, int]]) -> None:
         """Set the calibrated book region of interest (x1, y1, x2, y2)."""
+        if self._book_roi == roi:
+            return
         self._book_roi = roi
-        logger.info("Book ROI set: %s", roi)
+        logger.debug("Book ROI updated: %s", roi)
+
+    def close(self) -> None:
+        """Release MediaPipe resources."""
+        if hasattr(self, "_landmarker") and self._landmarker is not None:
+            try:
+                self._landmarker.close()
+            except Exception:
+                pass
 
     def process_frame(self, frame: np.ndarray) -> Optional[FaceResult]:
         """

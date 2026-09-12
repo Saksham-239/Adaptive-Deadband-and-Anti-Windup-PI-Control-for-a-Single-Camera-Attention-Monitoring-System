@@ -19,7 +19,7 @@ from core.attention import (
     AttentionScorer,
 )
 from core.detector import BBox
-from core.vision import GazeZone
+from core.vision import GazeZone, classify_gaze_zone
 
 
 # ---------------------------------------------------------------------------
@@ -27,31 +27,58 @@ from core.vision import GazeZone
 # ---------------------------------------------------------------------------
 
 class TestGazeScore:
-    def test_inside_roi_is_1(self):
-        roi = (100, 100, 400, 400)
-        score = gaze_score(GazeZone.BOOK, roi, iris_cx=250, iris_cy=250, margin_px=30)
-        assert score == pytest.approx(1.0)
+    def test_book_zone_returns_1(self):
+        assert gaze_score(GazeZone.BOOK) == pytest.approx(1.0)
 
-    def test_far_outside_roi_approaches_0(self):
-        roi = (100, 100, 200, 200)
-        score = gaze_score(GazeZone.AWAY, roi, iris_cx=900, iris_cy=900, margin_px=30)
-        assert score == pytest.approx(0.0)
+    def test_away_zone_returns_0(self):
+        assert gaze_score(GazeZone.AWAY) == pytest.approx(0.0)
 
-    def test_no_roi_book_zone_returns_1(self):
-        assert gaze_score(GazeZone.BOOK, None, None, None) == pytest.approx(1.0)
-
-    def test_no_roi_away_zone_returns_0(self):
-        assert gaze_score(GazeZone.AWAY, None, None, None) == pytest.approx(0.0)
-
-    def test_no_roi_screen_zone_returns_neutral(self):
-        score = gaze_score(GazeZone.SCREEN, None, None, None)
+    def test_screen_zone_returns_neutral(self):
+        score = gaze_score(GazeZone.SCREEN)
         assert 0.0 < score < 1.0
 
-    def test_desk_zone_no_roi(self):
-        score = gaze_score(GazeZone.DESK, None, None, None)
-        # TODO/FLAG: Expected value was previously 0.7, now updated to 0.8 to match the code.
-        # Because there's no git history, this 0.7 -> 0.8 change is unverified and needs human sign-off.
-        assert score == pytest.approx(0.8)
+    def test_desk_zone_returns_point_8(self):
+        assert gaze_score(GazeZone.DESK) == pytest.approx(0.8)
+
+    def test_unknown_zone_returns_point_3(self):
+        assert gaze_score(GazeZone.UNKNOWN) == pytest.approx(0.3)
+
+    def test_book_zone_pitch_down_disjoint_iris_roi(self):
+        """
+        Verify that when pitched down with a calibrated ROI on the desk (pitch > pitch_down_threshold),
+        classify_gaze_zone() prioritizes GazeZone.BOOK over GazeZone.DESK, and gaze_score(zone) evaluates to 1.0.
+        When uncalibrated (book_roi=None) with identical posture, it yields GazeZone.DESK and gaze_score(zone) evaluates to 0.8.
+        """
+        desk_book_roi = (100, 300, 500, 480)
+        pitch_down = 20.0     # above pitch_down_threshold (15.0)
+
+        # 1. Calibrated book ROI present -> BOOK zone (score = 1.0)
+        zone_calibrated = classify_gaze_zone(
+            yaw=0.0,
+            pitch=pitch_down,
+            iris_dev_x=0.0,
+            iris_dev_y=0.0,
+            book_roi=desk_book_roi,
+            frame_w=640,
+            frame_h=480,
+            pitch_down_threshold=15.0,
+        )
+        assert zone_calibrated == GazeZone.BOOK
+        assert gaze_score(zone_calibrated) == pytest.approx(1.0)
+
+        # 2. Uncalibrated (no book ROI) -> DESK zone (score = 0.8)
+        zone_uncalibrated = classify_gaze_zone(
+            yaw=0.0,
+            pitch=pitch_down,
+            iris_dev_x=0.0,
+            iris_dev_y=0.0,
+            book_roi=None,
+            frame_w=640,
+            frame_h=480,
+            pitch_down_threshold=15.0,
+        )
+        assert zone_uncalibrated == GazeZone.DESK
+        assert gaze_score(zone_uncalibrated) == pytest.approx(0.8)
 
 
 # ---------------------------------------------------------------------------

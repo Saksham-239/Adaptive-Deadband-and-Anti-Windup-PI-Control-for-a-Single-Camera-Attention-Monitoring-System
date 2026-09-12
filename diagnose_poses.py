@@ -43,8 +43,7 @@ def main():
                 continue
             result = proc.process_frame(frame)
             if result and result.pose_valid:
-                g_zone = result.gaze_zone
-                g_s = gaze_score(g_zone, None, None, None, cfg["attention"]["gaze_zone_margin_px"])
+                g_s = gaze_score(g_zone)
                 h_s = head_score(result.yaw, result.pitch, cfg["attention"]["head_sigma_deg"])
                 b_s = blink_score(result.mean_ear, cfg["attention"]["blink_ear_threshold"])
                 rows.append({

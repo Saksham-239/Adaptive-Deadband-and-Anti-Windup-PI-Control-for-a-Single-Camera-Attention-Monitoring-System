@@ -64,17 +64,24 @@ class DetectionCache:
     """Lock-protected latest YOLO detection results."""
     lock: threading.Lock = field(default_factory=threading.Lock)
     bboxes: list[BBox] = field(default_factory=list)
+    reacq_proposals: list[BBox] = field(default_factory=list)
     timestamp: float = 0.0
 
-    def update(self, bboxes: list[BBox]) -> None:
+    def update(self, bboxes: list[BBox], reacq_proposals: Optional[list[BBox]] = None) -> None:
         with self.lock:
             self.bboxes = bboxes
+            self.reacq_proposals = reacq_proposals if reacq_proposals is not None else []
             self.timestamp = time.monotonic()
 
     def read(self) -> tuple[list[BBox], float]:
         """Returns (bboxes, timestamp). Safe to call from any thread."""
         with self.lock:
             return list(self.bboxes), self.timestamp
+
+    def read_reacq(self) -> tuple[list[BBox], float]:
+        """Returns (reacq_proposals, timestamp). For BookTracker reacquisition only."""
+        with self.lock:
+            return list(self.reacq_proposals), self.timestamp
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +131,10 @@ class Detector:
         self._classes       = cfg["yolo"]["classes_of_interest"]
         self._target_fps    = cfg["yolo"]["target_fps"]
         self._min_interval  = 1.0 / max(self._target_fps, 1)
+        self._reacq_conf    = cfg.get("book_tracker", {}).get("reacquisition_conf", 0.12)
+        # Compute model inference floor dynamically from all active thresholds in config
+        all_thresholds      = list(self._conf_threshs.values()) + [self._reacq_conf]
+        self._model_floor   = float(min(all_thresholds))
 
     def start(self) -> None:
         """Load YOLO model and start background inference thread."""
@@ -168,25 +179,32 @@ class Detector:
             except queue.Empty:
                 continue
 
-            bboxes = self._infer(frame)
-            self.cache.update(bboxes)
+            normal_bboxes, reacq_proposals = self._infer(frame)
+            self.cache.update(normal_bboxes, reacq_proposals)
             last_run = time.monotonic()
 
-    def _infer(self, frame: np.ndarray) -> list[BBox]:
-        """Run YOLO inference on frame, return filtered BBox list."""
+    def _infer(self, frame: np.ndarray) -> tuple[list[BBox], list[BBox]]:
+        """
+        Run YOLO inference on frame.
+        Returns:
+            (normal_bboxes, reacq_proposals)
+            - normal_bboxes: strictly gated by cfg['confidence_thresholds'] (phone, book >= 0.35)
+            - reacq_proposals: loose candidate proposals (book only, >= reacq_conf) for BookTracker
+        """
         try:
             results = self._model(
                 frame,
-                conf=0.20,  # low baseline; filtered per-class below
+                conf=self._model_floor,  # Dynamically computed from config
                 iou=self._iou_thresh,
                 classes=self._classes,
                 verbose=False,
             )
         except Exception as exc:
             logger.warning("YOLO inference error: %s", exc)
-            return []
+            return [], []
 
-        bboxes: list[BBox] = []
+        normal_bboxes: list[BBox] = []
+        reacq_proposals: list[BBox] = []
         for result in results:
             if result.boxes is None:
                 continue
@@ -194,17 +212,22 @@ class Detector:
                 cls_id = int(box.cls[0])
                 conf   = float(box.conf[0])
                 label  = _COCO_NAMES.get(cls_id, f"cls_{cls_id}")
-                
-                # Apply per-class confidence threshold
-                req_conf = self._conf_threshs.get(label, 0.50)
-                if conf < req_conf:
-                    continue
-                    
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                bboxes.append(BBox(
+                bbox = BBox(
                     label=label, class_id=cls_id, confidence=conf,
                     x1=x1, y1=y1, x2=x2, y2=y2,
-                ))
+                )
+                
+                # Standard authority gate (e.g. phone >= 0.75, book >= 0.35)
+                req_conf = self._conf_threshs.get(label, 0.50)
+                if conf >= req_conf:
+                    normal_bboxes.append(bbox)
+
+                # Reacquisition proposal gate (book only, >= reacq_conf e.g. 0.12)
+                if label == "book" and conf >= self._reacq_conf:
+                    reacq_proposals.append(bbox)
+
         # Sort by confidence descending
-        bboxes.sort(key=lambda b: b.confidence, reverse=True)
-        return bboxes
+        normal_bboxes.sort(key=lambda b: b.confidence, reverse=True)
+        reacq_proposals.sort(key=lambda b: b.confidence, reverse=True)
+        return normal_bboxes, reacq_proposals
