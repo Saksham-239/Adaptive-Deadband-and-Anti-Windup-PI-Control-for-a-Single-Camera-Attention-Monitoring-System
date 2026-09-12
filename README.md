@@ -51,7 +51,7 @@ A single gaze-away frame should not trigger a voice warning. The system uses an 
 MediaPipe and YOLO run asynchronously so the main camera/UI loop is not blocked by inference. Fresh frames are pushed through bounded queues, and a 0.5s wall-clock staleness guard expires face results immediately upon camera exit, preventing frozen telemetry.
 
 ### Dynamic visual book tracking
-Anchored by initial user calibration, `core/tracker.py` maintains tracking independently of repeated YOLO classifications. It combines sub-millisecond OpenCV CSRT visual tracking with a dual appearance gate ($Q_{\text{ncc}} \ge 0.50 \lor (Q_{\text{ncc}} \ge 0.35 \land Q_{\text{color}} \ge 0.25)$) to accommodate desk sliding, perspective foreshortening (30–40° tilt), and page flips while cleanly rejecting background drift. Low-confidence YOLO proposals ($conf \ge 0.12$) enable automatic reacquisition upon return to desk.
+Anchored by initial user calibration, `core/tracker.py` maintains tracking independently of repeated YOLO classifications. It combines sub-millisecond OpenCV CSRT visual tracking with a dual appearance gate (`Q_ncc >= 0.50` or `Q_ncc >= 0.35` and `Q_color >= 0.25`) to accommodate desk sliding, perspective foreshortening (30–40° tilt), and page flips while cleanly rejecting background drift. Low-confidence YOLO proposals (`conf >= 0.12`) enable automatic reacquisition upon return to desk.
 
 ### Adaptive deadband and anti-windup PI control
 The intervention bucket uses an anti-windup PI controller governed by an exponentially weighted moving variance (EMV) adaptive deadband. Inattention accumulates proportional-integral intervention debt, quantizing into escalating voice intervention tiers while preventing integrator windup and rapid threshold chattering.
@@ -80,36 +80,56 @@ Auditory Feedback ◄───────────────────�
 ```
 
 ### 1. Multi-Modal Signal Estimation
-The raw attention score $A(t) \in [0, 1]$ fuses four sensory signals:
-$$A(t) = w_{\text{gaze}} S_{\text{gaze}} + w_{\text{head}} S_{\text{head}} + w_{\text{ctx}} S_{\text{ctx}} + w_{\text{blink}} S_{\text{blink}}$$
-$A(t)$ is filtered using a 1€ observer filter (suppressing micro-jitter without adding latency) and an exponential moving average (EMA) to produce the continuous state estimate $A_f(t)$.
+The raw attention score `A(t)` in `[0, 1]` fuses four sensory signals:
+
+```text
+A(t) = w_gaze * S_gaze + w_head * S_head + w_ctx * S_ctx + w_blink * S_blink
+```
+
+`A(t)` is filtered using a 1-Euro observer filter (suppressing micro-jitter without adding latency) and an exponential moving average (EMA) to produce the continuous state estimate `A_f(t)`.
 
 ### 2. Adaptive Deadband (EMV Variance Scaling)
 To eliminate control chattering when the user's attention signal hovers near threshold boundaries, an Exponential Moving Variance (EMV) filter dynamically tracks signal noise:
-$$\mu(t) = \alpha_{\text{emv}} A_f(t) + (1 - \alpha_{\text{emv}}) \mu(t-1)$$
-$$\sigma^2(t) = (1 - \alpha_{\text{emv}}) \left[ \sigma^2(t-1) + \alpha_{\text{emv}} (A_f(t) - \mu(t-1))^2 \right]$$
 
-The hysteresis bandwidth $B(t)$ scales dynamically with standard deviation $\sigma(t)$:
-$$B(t) = \text{clamp}\left(B_{\min} + k_{\text{band}} \cdot \sigma(t), \; B_{\min}, \; B_{\max}\right)$$
-$$T_{\text{focused}}(t) = T_c + \frac{B(t)}{2}, \qquad T_{\text{distracted}}(t) = T_c - \frac{B(t)}{2}$$
+```text
+Rolling Mean:     μ(t)  = α_emv * A_f(t) + (1 - α_emv) * μ(t-1)
+Rolling Variance: σ²(t) = (1 - α_emv) * [σ²(t-1) + α_emv * (A_f(t) - μ(t-1))²]
+```
 
-The deadband error $e_{\text{db}}(t)$ feeds into the controller:
-$$e_{\text{db}}(t) = \begin{cases} T_{\text{distracted}}(t) - A_f(t) & \text{if } A_f(t) < T_{\text{distracted}}(t) \quad (\text{distraction error } > 0) \\ T_{\text{focused}}(t) - A_f(t) & \text{if } A_f(t) > T_{\text{focused}}(t) \quad (\text{recovery error } < 0) \\ 0 & \text{otherwise (neutral deadband)} \end{cases}$$
+The hysteresis bandwidth `B(t)` scales dynamically with standard deviation `σ(t)`:
+
+```text
+B(t) = clamp(B_min + k_band * σ(t), B_min, B_max)
+T_focused    = T_c + B(t) / 2
+T_distracted = T_c - B(t) / 2
+```
+
+The deadband error `e_db(t)` feeds directly into the controller:
+
+```text
+e_db = T_distracted - A_f    (if A_f < T_distracted: positive distraction debt)
+e_db = T_focused - A_f       (if A_f > T_focused: negative recovery credit)
+e_db = 0.0                   (inside neutral deadband gap)
+```
 
 ### 3. Anti-Windup PI Controller
-Intervention demand $u(t)$ is governed by a proportional-integral control law with asymmetric accumulation and recovery gains:
-$$u(t) = K_p \cdot e_{\text{db}}(t) + I(t)$$
-* **Distraction Accumulation ($e_{\text{db}} > 0$):** Integrates at rate $K_{i,\text{up}}$. If demand reaches the maximum actuator saturation boundary ($u \ge u_{\text{act\_max}} = 2.25$), positive integration is immediately clamped (conditional anti-windup).
-* **Focus Recovery ($e_{\text{db}} < 0$):** Discharges intervention debt at an accelerated rate $K_{i,\text{down}}$ ($K_{i,\text{down}} > K_{i,\text{up}}$), rewarding rapid refocusing without residual lag.
-* **Neutral Cool-Down ($e_{\text{db}} = 0$):** Decays accumulated debt exponentially: $I(t) \leftarrow \max(0, I(t) - \lambda_{\text{cool}} I(t) \Delta t)$.
-* **Discontinuity Protection:** Integrator updates are frozen ($\Delta t_{\text{ctrl}} = 0$) if an OS scheduling jitter or frame lag spike exceeds $0.5\,\text{s}$, preventing artificial numerical accumulation.
+Intervention demand `u(t)` is governed by a proportional-integral control law with asymmetric accumulation and recovery gains:
+
+```text
+u(t) = Kp * e_db(t) + I(t)
+```
+
+* **Distraction Accumulation (`e_db > 0`):** Integrates at rate `Ki_up`. If demand reaches the maximum actuator saturation boundary (`u >= u_act_max = 2.25`), positive integration is immediately clamped (conditional anti-windup).
+* **Focus Recovery (`e_db < 0`):** Discharges intervention debt at an accelerated rate `Ki_down` (`Ki_down > Ki_up`), rewarding rapid refocusing without residual lag.
+* **Neutral Cool-Down (`e_db == 0`):** Decays accumulated debt exponentially: `I(t) = max(0, I(t) - λ_cool * I(t) * Δt)`.
+* **Discontinuity Protection:** Integrator updates are frozen (`Δt_ctrl = 0`) if an OS scheduling jitter or frame lag spike exceeds 0.5s, preventing artificial numerical accumulation.
 
 ### 4. Stateful Schmitt Quantizer (Actuator Interface)
-Continuous intervention demand $u(t)$ is mapped into discrete voice intervention tiers $\{0, 1, 2, 3\}$ using a stateful 4-tier Schmitt trigger with downward hysteresis $\delta = 0.05$:
-* **Tier 0 (Silent):** $u < 0.75$ (nominal focused state)
-* **Tier 1 (Gentle Reminder):** $u \ge 0.75$ (downward exit at $0.70$)
-* **Tier 2 (Firm Prompt):** $u \ge 1.50$ (downward exit at $1.45$)
-* **Tier 3 (Urgent Reset):** $u \ge 2.25$ (downward exit at $2.20$, aligned with $u_{\text{act\_max}}$)
+Continuous intervention demand `u(t)` is mapped into discrete voice intervention tiers `{0, 1, 2, 3}` using a stateful 4-tier Schmitt trigger with downward hysteresis `δ = 0.05`:
+* **Tier 0 (Silent):** `u < 0.75` (nominal focused state)
+* **Tier 1 (Gentle Reminder):** `u >= 0.75` (downward exit at `0.70`)
+* **Tier 2 (Firm Prompt):** `u >= 1.50` (downward exit at `1.45`)
+* **Tier 3 (Urgent Reset):** `u >= 2.25` (downward exit at `2.20`, aligned with `u_act_max`)
 
 This hysteresis prevents auditory oscillation and prompt spamming when attention fluctuates near a tier boundary.
 
