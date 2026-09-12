@@ -40,7 +40,7 @@ def test_put_fresh_pushes_none_on_absence():
 
 
 def test_face_staleness_timeout_expires_result():
-    """Simulate main loop queue consumption and wall-clock staleness expiration."""
+    """Simulate main loop queue consumption and wall-clock staleness expiration (discrete tick simulation)."""
     FACE_STALENESS_TIMEOUT_SEC = 0.5
     result_q = queue.Queue(maxsize=1)
     
@@ -91,6 +91,56 @@ def test_face_staleness_timeout_expires_result():
     if last_face_result is not None and (t_tick3 - last_face_time > FACE_STALENESS_TIMEOUT_SEC):
         last_face_result = None
         
+    assert last_face_result is None
+
+
+def test_face_staleness_timeout_real_clock():
+    """Exercise 0.5s staleness timeout path using real wall-clock elapsed time with time.monotonic()."""
+    FACE_STALENESS_TIMEOUT_SEC = 0.5
+    result_q = queue.Queue(maxsize=1)
+    
+    last_face_result = None
+    last_face_time = 0.0
+    
+    # Push face detection at real current time
+    t_initial = time.monotonic()
+    dummy_face = MagicMock(spec=FaceResult)
+    put_fresh(result_q, (dummy_face, t_initial))
+    
+    # Main loop consumes queue
+    try:
+        res, ts = result_q.get_nowait()
+        last_face_result = res
+        last_face_time = ts
+    except queue.Empty:
+        pass
+        
+    now = time.monotonic()
+    if last_face_result is not None and (now - last_face_time > FACE_STALENESS_TIMEOUT_SEC):
+        last_face_result = None
+    
+    # Immediately after detection, face must still be active
+    assert last_face_result is dummy_face
+    
+    # Wait short interval (100ms) - well under 500ms timeout
+    time.sleep(0.10)
+    now = time.monotonic()
+    assert (now - last_face_time) < FACE_STALENESS_TIMEOUT_SEC
+    if last_face_result is not None and (now - last_face_time > FACE_STALENESS_TIMEOUT_SEC):
+        last_face_result = None
+    assert last_face_result is dummy_face
+    
+    # Wait until real elapsed time exceeds 0.5s timeout (sleep 450ms more -> total > 550ms)
+    time.sleep(0.45)
+    now = time.monotonic()
+    elapsed = now - last_face_time
+    assert elapsed > FACE_STALENESS_TIMEOUT_SEC, f"Real clock elapsed {elapsed:.3f}s did not exceed {FACE_STALENESS_TIMEOUT_SEC}s"
+    
+    # Main loop staleness guard executes
+    if last_face_result is not None and (now - last_face_time > FACE_STALENESS_TIMEOUT_SEC):
+        last_face_result = None
+        
+    # Result must be expired to None by real elapsed time
     assert last_face_result is None
 
 

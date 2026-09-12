@@ -202,13 +202,37 @@ python setup.py
 python main.py
 ```
 
-### 6. Start the dashboard
+### 6. Start the Web Analytics Dashboard
 
-In a second terminal:
+Face Focus includes a browser-based analytics application ([`dashboard.py`](dashboard.py)) built with **Streamlit** and **Plotly Dark**. It connects directly to the local SQLite database (`data/sessions.db`) to visualize study telemetry both live and post-hoc.
+
+#### Launching the Dashboard
+
+Run this command in a separate terminal (or anytime to review past study sessions):
 
 ```bash
+# If using the project's virtual environment (recommended):
+.venv\Scripts\python -m streamlit run dashboard.py
+
+# Or if your virtual environment is already activated:
 streamlit run dashboard.py
 ```
+
+The dashboard will automatically open in your web browser at:
+> **`http://localhost:8501`**
+
+#### Dashboard Features & Usage
+
+* **Live & Historical Operation Modes**:
+  - **Live Monitoring**: Run concurrently alongside `python main.py`. With the sidebar **Auto-refresh** toggle enabled (polled every `dashboard.refresh_interval_sec` in `config.yaml`, default `2.0s`), graphs update in real-time as you study.
+  - **Historical Review**: Run standalone without activating the camera to analyze, compare, and audit past recorded sessions using the sidebar **Select session** dropdown.
+* **Executive Summary Cards**: Displays total session duration (minutes), mean attention score (`0.0–1.0`), focus ratio (`% time in READING / WRITING`), distraction ratio (`% time in DISTRACTED / PHONE`), and count of TTS voice interventions dispatched.
+* **Attention Score Over Time**: Interactive Plotly graph plotting both Raw fused attention and Filtered (1-Euro + EMA) attention, with shaded red vertical regions highlighting contiguous distraction episodes.
+* **Time in State (Donut Chart)**: Percentage breakdown of study time spent across FSM states (`READING`, `WRITING`, `THINKING`, `DISTRACTED`, `PHONE`, `BREAK`, `UNKNOWN`, `CALIBRATING`).
+* **Component Score Trajectories**: Multi-line tracking of the four underlying sensory components: Gaze (`S_gaze`), Head Pose (`S_head`), Context/YOLO (`S_ctx`), and Blink/EAR (`S_blink`).
+* **Gaze Zone Distribution**: Bar chart comparing fixation counts across detected zones (`screen`, `desk`, `book`, and `away`).
+* **Intervention Event Scatter**: Timestamped timeline of auditory intervention alerts showing Tier 1 (Soft), Tier 2 (Firm), and Tier 3 (Urgent) triggers.
+* **Raw Data Inspector**: Collapsible table viewer allowing you to inspect the latest raw tabular rows stored in SQLite.
 
 ### 7. Run tests
 
