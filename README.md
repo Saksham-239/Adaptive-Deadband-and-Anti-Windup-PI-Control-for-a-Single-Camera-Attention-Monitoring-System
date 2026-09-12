@@ -56,6 +56,63 @@ Anchored by initial user calibration, `core/tracker.py` maintains tracking indep
 ### Adaptive deadband and anti-windup PI control
 The intervention bucket uses an anti-windup PI controller governed by an exponentially weighted moving variance (EMV) adaptive deadband. Inattention accumulates proportional-integral intervention debt, quantizing into escalating voice intervention tiers while preventing integrator windup and rapid threshold chattering.
 
+## Control System Loop & Dynamics
+
+The core control-theoretic architecture regulates human-in-the-loop attention using closed-loop feedback. Rather than relying on static heuristic rules, the system models attention regulation as a continuous feedback loop featuring an adaptive deadband, an anti-windup PI controller, and a stateful Schmitt quantizer.
+
+```text
+               Target Focus Reference (T_c)
+                             │
+                             ▼
+Human Plant ──► [ Perception & Estimator ] ──( A_f )──► [ Adaptive Deadband (EMV) ]
+(Gaze, Head,     (MediaPipe, solvePnP,                   (Rolling Variance σ_attn)
+ Desk, Blink)     YOLO, BookTracker)                                 │
+                                                                     ▼  e_db
+                                                         [ Anti-Windup PI Controller ]
+                                                         (Kp, Ki_up, Ki_down, Cool-down)
+                                                                     │
+                                                                     ▼  u(t)
+                                                      [ Stateful Schmitt Quantizer ]
+                                                      (4 Tiers with Hysteresis δ)
+                                                                     │
+                                                                     ▼  Tier {0, 1, 2, 3}
+Auditory Feedback ◄─────────────────────────────────── [ Voice TTS Actuator ]
+```
+
+### 1. Multi-Modal Signal Estimation
+The raw attention score $A(t) \in [0, 1]$ fuses four sensory signals:
+$$A(t) = w_{\text{gaze}} S_{\text{gaze}} + w_{\text{head}} S_{\text{head}} + w_{\text{ctx}} S_{\text{ctx}} + w_{\text{blink}} S_{\text{blink}}$$
+$A(t)$ is filtered using a 1€ observer filter (suppressing micro-jitter without adding latency) and an exponential moving average (EMA) to produce the continuous state estimate $A_f(t)$.
+
+### 2. Adaptive Deadband (EMV Variance Scaling)
+To eliminate control chattering when the user's attention signal hovers near threshold boundaries, an Exponential Moving Variance (EMV) filter dynamically tracks signal noise:
+$$\mu(t) = \alpha_{\text{emv}} A_f(t) + (1 - \alpha_{\text{emv}}) \mu(t-1)$$
+$$\sigma^2(t) = (1 - \alpha_{\text{emv}}) \left[ \sigma^2(t-1) + \alpha_{\text{emv}} (A_f(t) - \mu(t-1))^2 \right]$$
+
+The hysteresis bandwidth $B(t)$ scales dynamically with standard deviation $\sigma(t)$:
+$$B(t) = \text{clamp}\left(B_{\min} + k_{\text{band}} \cdot \sigma(t), \; B_{\min}, \; B_{\max}\right)$$
+$$T_{\text{focused}}(t) = T_c + \frac{B(t)}{2}, \qquad T_{\text{distracted}}(t) = T_c - \frac{B(t)}{2}$$
+
+The deadband error $e_{\text{db}}(t)$ feeds into the controller:
+$$e_{\text{db}}(t) = \begin{cases} T_{\text{distracted}}(t) - A_f(t) & \text{if } A_f(t) < T_{\text{distracted}}(t) \quad (\text{distraction error } > 0) \\ T_{\text{focused}}(t) - A_f(t) & \text{if } A_f(t) > T_{\text{focused}}(t) \quad (\text{recovery error } < 0) \\ 0 & \text{otherwise (neutral deadband)} \end{cases}$$
+
+### 3. Anti-Windup PI Controller
+Intervention demand $u(t)$ is governed by a proportional-integral control law with asymmetric accumulation and recovery gains:
+$$u(t) = K_p \cdot e_{\text{db}}(t) + I(t)$$
+* **Distraction Accumulation ($e_{\text{db}} > 0$):** Integrates at rate $K_{i,\text{up}}$. If demand reaches the maximum actuator saturation boundary ($u \ge u_{\text{act\_max}} = 2.25$), positive integration is immediately clamped (conditional anti-windup).
+* **Focus Recovery ($e_{\text{db}} < 0$):** Discharges intervention debt at an accelerated rate $K_{i,\text{down}}$ ($K_{i,\text{down}} > K_{i,\text{up}}$), rewarding rapid refocusing without residual lag.
+* **Neutral Cool-Down ($e_{\text{db}} = 0$):** Decays accumulated debt exponentially: $I(t) \leftarrow \max(0, I(t) - \lambda_{\text{cool}} I(t) \Delta t)$.
+* **Discontinuity Protection:** Integrator updates are frozen ($\Delta t_{\text{ctrl}} = 0$) if an OS scheduling jitter or frame lag spike exceeds $0.5\,\text{s}$, preventing artificial numerical accumulation.
+
+### 4. Stateful Schmitt Quantizer (Actuator Interface)
+Continuous intervention demand $u(t)$ is mapped into discrete voice intervention tiers $\{0, 1, 2, 3\}$ using a stateful 4-tier Schmitt trigger with downward hysteresis $\delta = 0.05$:
+* **Tier 0 (Silent):** $u < 0.75$ (nominal focused state)
+* **Tier 1 (Gentle Reminder):** $u \ge 0.75$ (downward exit at $0.70$)
+* **Tier 2 (Firm Prompt):** $u \ge 1.50$ (downward exit at $1.45$)
+* **Tier 3 (Urgent Reset):** $u \ge 2.25$ (downward exit at $2.20$, aligned with $u_{\text{act\_max}}$)
+
+This hysteresis prevents auditory oscillation and prompt spamming when attention fluctuates near a tier boundary.
+
 ## Project Structure
 
 ```text
