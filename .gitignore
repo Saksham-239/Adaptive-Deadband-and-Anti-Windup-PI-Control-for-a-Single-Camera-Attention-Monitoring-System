@@ -43,6 +43,7 @@ data/*.db
 data/*.sqlite3
 diagnose_results.csv
 scratch/
+docs/
 context_dump.md
 
 # Large model weights (downloaded via setup.py / ultralytics)
